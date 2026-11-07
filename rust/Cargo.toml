@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
+[lib]
+name = "datum_params_tools"
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 anyhow = "1"
 blake3 = "1"

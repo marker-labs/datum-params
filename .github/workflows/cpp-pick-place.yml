@@ -1,0 +1,30 @@
+name: C++ pick-and-place example
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  cpp-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build generator and preflight
+        run: cargo test --manifest-path rust/Cargo.toml --locked
+      - name: Check C++ generated-header example
+        run: python3 -m unittest discover -s examples/cpp-pick-place/tests -v
+      - name: Check Python loader and URDF validation
+        run: |
+          PYTHONPATH="$PWD/datum_interface/python" python3 -m unittest discover -s datum_interface/tests -v
+          PYTHONPATH="$PWD/parameter_studio" python3 -m unittest discover -s parameter_studio/tests -v
+  ros2-cpp-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create synthetic test CAD and generate the C++ header
+        run: python3 examples/ros2_cpp_pick_place/make_ci_fixture.py .ci-ros-fixture
+      - name: Build ROS 2 Jazzy example image
+        run: docker build -t dparams-ros2-cpp-demo -f examples/ros2_cpp_pick_place/Dockerfile .
+      - name: Run C++ ROS 2 action client and motor simulator
+        run: docker run --rm -v "$PWD:/workspace:ro" dparams-ros2-cpp-demo bash -c '/workspace/examples/ros2_cpp_pick_place/smoke.sh /workspace/.ci-ros-fixture/datum /tmp/ros-smoke'

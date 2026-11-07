@@ -34,6 +34,61 @@ class Parameters:
         return {node_name: {"ros__parameters": dict(self.values)}}
 
 
+from .lazy import evaluate_lazy, write_evidence
+
+
+def _check_manifest(manifest):
+    """Shared value contract for compiled and lazy manifests.
+
+    Both loaders must accept and reject the same values: a manifest with a
+    non-positive parameter outside its bounds, a non-finite value or malformed
+    groups is invalid however it was produced.
+    """
+    if manifest.get("schema") != "datum.robot.parameters/2" or manifest.get("units") != "m":
+        raise ValueError("unsupported Datum parameter manifest")
+    values = manifest.get("parameters")
+    if not isinstance(values, dict) or not values:
+        raise ValueError("Datum manifest has no parameters")
+    bounds = manifest.get("bounds", {})
+    if not isinstance(bounds, dict):
+        raise ValueError("invalid Datum parameter bounds")
+    for name, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"invalid Datum parameter {name}")
+        limits = bounds.get(name, {})
+        if not isinstance(limits, dict):
+            raise ValueError(f"invalid Datum parameter bounds for {name}")
+        if value <= 0 and limits.get("allow_nonpositive") is not True:
+            raise ValueError(f"invalid non-positive Datum parameter {name}")
+        if value < (limits.get("min") if limits.get("min") is not None else -math.inf) or value > (limits.get("max") if limits.get("max") is not None else math.inf):
+            raise ValueError(f"Datum parameter {name} is outside its allowed bounds")
+    groups = manifest.get("groups")
+    if not isinstance(groups, dict) or any(not isinstance(v, list) or any(n not in values for n in v) for v in groups.values()):
+        raise ValueError("invalid Datum feature groups")
+    return manifest
+
+
+def load_lazy(project, *, worktree="main", evidence=None):
+    """Load parameters directly from spec and saved CAD, with no generated files.
+
+    Evaluates PROJECT/datum/spec.json for the selected worktree against the
+    saved SolidCraft sources and returns the same Parameters object as load().
+    No generated parameters.json or parameters.hpp needs to exist. The manifest
+    passes the same value contract as load(): missing fields, unit mismatches,
+    out-of-bounds values, non-positive dimensions and malformed groups raise
+    ValueError instead of returning values. Values are re-read at startup;
+    concurrent edits during evaluation are detected by the source-hash check,
+    not blocked. When evidence is a path, a machine-readable record of this
+    evaluation (evidence schema, mode, values, bounds, source and spec SHA-256
+    hashes) is written there.
+    """
+    manifest, lazy_evidence = evaluate_lazy(project, worktree=worktree)
+    _check_manifest(manifest)
+    if evidence is not None:
+        write_evidence(evidence, lazy_evidence)
+    return Parameters(manifest)
+
+
 def load(manifest_path, *, worktree=None):
     """Load a generated manifest after checking the selected tree and CAD hashes."""
     path = Path(manifest_path).resolve()
@@ -56,19 +111,5 @@ def load(manifest_path, *, worktree=None):
             raise ValueError(f"Datum CAD source escapes project: {name}")
         if hashlib.sha256(candidate.read_bytes()).hexdigest() != expected:
             raise ValueError(f"Datum CAD source changed: {name}; regenerate parameters and rebuild")
-    values = manifest.get("parameters")
-    if not isinstance(values, dict) or not values:
-        raise ValueError("Datum manifest has no parameters")
-    bounds = manifest.get("bounds", {})
-    for name, value in values.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-            raise ValueError(f"invalid Datum parameter {name}")
-        limits = bounds.get(name, {})
-        if value <= 0 and limits.get("allow_nonpositive") is not True:
-            raise ValueError(f"invalid non-positive Datum parameter {name}")
-        if value < (limits.get("min") if limits.get("min") is not None else -math.inf) or value > (limits.get("max") if limits.get("max") is not None else math.inf):
-            raise ValueError(f"Datum parameter {name} is outside its allowed bounds")
-    groups = manifest.get("groups")
-    if not isinstance(groups, dict) or any(not isinstance(v, list) or any(n not in values for n in v) for v in groups.values()):
-        raise ValueError("invalid Datum feature groups")
+    _check_manifest(manifest)
     return Parameters(manifest)
